@@ -1,3 +1,4 @@
+#We never write passwords directly inside our code. config.py acts like a security guard at startup: it reads .env, makes sure no required settings are missing, and builds the exact login URL for our database (async_database_url
 from functools import lru_cache
 from typing import Literal
 from pydantic_settings import BaseSettings, SettingsConfigDict

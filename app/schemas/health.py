@@ -7,3 +7,4 @@ class HealthResponse(BaseModel):
     service: str = Field(..., examples=["IntelliOps Research Intelligence Engine"])
     version: str = Field(..., examples=["0.1.0"])
     environment: str = Field(..., examples=["development"])
+    database: str = Field(..., examples=["connected"], description="PostgreSQL database connection status")
