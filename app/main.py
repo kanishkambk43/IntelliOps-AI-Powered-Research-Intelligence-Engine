@@ -2,10 +2,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.core.config import settings
-from app.api.v1 import health
+from app.api.v1 import health, research
 from app.db.base import Base
 from app.db.session import engine
-from app.models import research  # noqa: F401
+from app.models import research as research_model  # noqa: F401
 
 
 @asynccontextmanager
@@ -26,11 +26,16 @@ def create_application() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Plug in the v1 health router
+    # Plug in the v1 routers
     application.include_router(
         health.router,
         prefix=settings.API_V1_PREFIX,
         tags=["System Health"],
+    )
+    application.include_router(
+        research.router,
+        prefix=settings.API_V1_PREFIX,
+        tags=["Research Intelligence"],
     )
 
     return application
