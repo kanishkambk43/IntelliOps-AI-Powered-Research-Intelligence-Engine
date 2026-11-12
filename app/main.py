@@ -1,17 +1,22 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from sqlalchemy import text
 
 from app.core.config import settings
 from app.api.v1 import health, research
 from app.db.base import Base
 from app.db.session import engine
 from app.models import research as research_model  # noqa: F401
+from app.models import document as document_model  # noqa: F401
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # --- Runs right BEFORE the server starts taking requests ---
     async with engine.begin() as conn:
+        # 1. Turn on the pgvector extension inside PostgreSQL
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+        # 2. Create all tables (research_tasks and document_chunks)
         await conn.run_sync(Base.metadata.create_all)
     yield
     # --- Runs right AFTER the server shuts down ---
