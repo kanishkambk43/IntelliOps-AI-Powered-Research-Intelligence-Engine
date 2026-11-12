@@ -3,7 +3,7 @@ from fastapi import FastAPI
 from sqlalchemy import text
 
 from app.core.config import settings
-from app.api.v1 import health, research
+from app.api.v1 import documents, health, research
 from app.db.base import Base
 from app.db.session import engine
 from app.models import research as research_model  # noqa: F401
@@ -41,6 +41,11 @@ def create_application() -> FastAPI:
         research.router,
         prefix=settings.API_V1_PREFIX,
         tags=["Research Intelligence"],
+    )
+    application.include_router(
+        documents.router,
+        prefix=settings.API_V1_PREFIX,
+        tags=["Knowledge Base (RAG)"],
     )
 
     return application
