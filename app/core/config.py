@@ -12,12 +12,15 @@ class Settings(BaseSettings):
     API_V1_PREFIX: str = "/api/v1"
     DEBUG: bool = False
 
-    # PostgreSQL Database Configuration
+    # Database Settings
     POSTGRES_USER: str
     POSTGRES_PASSWORD: str
     POSTGRES_HOST: str
-    POSTGRES_PORT: int = 5432
+    POSTGRES_PORT: int
     POSTGRES_DB: str
+
+    # AI / LLM Settings
+    GEMINI_API_KEY: str = ""
 
     @property #function into a variable
     def async_database_url(self) -> str:
