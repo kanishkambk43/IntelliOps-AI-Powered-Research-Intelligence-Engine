@@ -13,10 +13,14 @@ class ResearchService:
     @staticmethod
     async def create_task(db: AsyncSession, payload: ResearchRequest) -> ResearchTask:
         # 1. Package the user question and database session into our LangGraph state clipboard
+        # 1. Package the user question and database session into our LangGraph state clipboard
         initial_state = {
-            "query": payload.query,
+            "original_query": payload.query,
+            "search_query": payload.query,
             "db": db,
             "context": [],
+            "retry_count": 0,
+            "is_relevant": False,
             "report": "",
         }
 
