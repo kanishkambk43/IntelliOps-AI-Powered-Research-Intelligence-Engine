@@ -1,27 +1,27 @@
-#Separates our API input/output validation rules (schemas) from our database table (models).
-import uuid
 from datetime import datetime
+import uuid
 from pydantic import BaseModel, ConfigDict, Field
 
-
-# 1. What the user is allowed to send us when asking a question
 class ResearchRequest(BaseModel):
     query: str = Field(
-        ...,
-        min_length=5,
-        max_length=2000,
+        ..., 
+        min_length=5, 
+        max_length=1000,
+        description="The engineering or research question to investigate.",
         examples=["Why did our payment service latency spike yesterday?"],
-        description="The research question or problem statement to investigate",
     )
 
-
-# 2. What our API sends back to the user
 class ResearchResponse(BaseModel):
     id: uuid.UUID
     query: str
+    rewritten_query: str | None = None
     status: str
     result: str | None = None
+    sources: list[str] = Field(default_factory=list)
+    execution_time_seconds: float | None = Field(
+        default=None, 
+        description="How long the AI took to complete the task in seconds"
+    )
     created_at: datetime
 
-    # Allows Pydantic to read data directly from a SQLAlchemy database object
     model_config = ConfigDict(from_attributes=True)

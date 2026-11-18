@@ -33,17 +33,19 @@ async def call_gemini(prompt: str, timeout_seconds: float = 10.0) -> str | None:
 
 
 # 1. The Clipboard: Holds state across the entire graph
+# 1. Update ResearchState to include 'sources'
 class ResearchState(TypedDict):
     original_query: str
     search_query: str
     db: AsyncSession
     context: list[str]
+    sources: list[str]
     retry_count: int
     is_relevant: bool
     report: str
 
 
-# 2. Station 1: Search pgvector using the current search_query
+# 2. Update Station 1 (retrieve_node) to return both context and clean source labels
 async def retrieve_node(state: ResearchState) -> dict:
     query_to_use = state.get("search_query") or state["original_query"]
     print(f"--> [Station 1: Retrieve] Searching database for: '{query_to_use}'")
@@ -56,9 +58,12 @@ async def retrieve_node(state: ResearchState) -> dict:
         f"Source: {doc.title} ({doc.source})\nContent: {doc.content}"
         for doc in docs
     ]
+    source_list = [f"{doc.title} ({doc.source})" for doc in docs]
+
     return {
         "search_query": query_to_use,
         "context": formatted_docs,
+        "sources": source_list,
     }
 
 
