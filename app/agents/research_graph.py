@@ -3,11 +3,11 @@ from typing import Literal, TypedDict
 from google import genai
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
-
+from ddgs import DDGS
 from app.core.config import settings
 from app.rag.retriever import RAGRetriever
 
-MODEL_ID = "gemini-3.8-flash"
+MODEL_ID = "gemini-3.5-flash-lite"
 
 
 # Helper: Hard 10-second timeout so Google 503 retries never hang your request
@@ -101,6 +101,40 @@ async def rewrite_query_node(state: ResearchState) -> dict:
         "retry_count": state.get("retry_count", 0) + 1,
     }
 
+async def web_search_node(state: ResearchState) -> dict:
+    search_query = state.get("search_query") or state["original_query"]
+    print(f"--> [Station 3.5: Web Search] Searching DuckDuckGo for: '{search_query}'")
+
+    try:
+        results = await asyncio.to_thread(
+            lambda: list(DDGS().text(search_query, max_results=3))
+        )
+        print(f"--> [Station 3.5: Web Search] Found {len(results)} web results.")
+    except Exception as e:
+        print(f"[WARN] DuckDuckGo search failed: {e}")
+        results = []
+
+    if not results:
+        return {
+            "context": state.get("context", []),
+            "sources": state.get("sources", []),
+        }
+
+    web_context = "\n\n".join(
+        [f"URL: {r['href']}\nSnippet: {r['body']}" for r in results]
+    )
+    web_sources = [r["href"] for r in results]
+
+    current_context = list(state.get("context", []))
+    current_sources = list(state.get("sources", []))
+
+    current_context.append(f"--- LIVE WEB SEARCH RESULTS ---\n{web_context}")
+
+    return {
+        "context": current_context,
+        "sources": current_sources + web_sources,
+    }
+
 
 # 5. Station 4: Write the final cited engineering report
 async def synthesize_node(state: ResearchState) -> dict:
@@ -108,37 +142,54 @@ async def synthesize_node(state: ResearchState) -> dict:
     if not settings.GEMINI_API_KEY:
         return {"report": "Error: GEMINI_API_KEY is missing in your .env file."}
 
+    # If internal docs didn't match the question, keep only live web results
+    if state.get("is_relevant"):
+        active_context = state.get("context", [])
+        active_sources = state.get("sources", [])
+    else:
+        active_context = [
+            c for c in state.get("context", []) if "--- LIVE WEB SEARCH RESULTS ---" in c
+        ]
+        active_sources = [
+            s for s in state.get("sources", []) if s.startswith("http")
+        ]
+
+    combined_context = "\n\n".join(active_context)
     context_block = (
-        "\n\n".join(state["context"])
-        if state["context"]
-        else "No internal company documents matched this query."
+        combined_context
+        if combined_context
+        else "No internal documents or web results matched this query."
     )
 
     prompt = (
         "You are IntelliOps, a senior engineering research assistant.\n"
-        "Answer the user's question clearly using ONLY the internal documents below.\n"
-        "Always cite the document title and source file in your answer.\n\n"
-        f"Internal Documents:\n{context_block}\n\n"
+        "Answer the user's question clearly using the internal documents and live web search results below.\n"
+        "Always cite the document title/source file or the web URL in your answer.\n\n"
+        f"Context:\n{context_block}\n\n"
         f"User Question: {state['original_query']}"
     )
 
     report = await call_gemini(prompt, timeout_seconds=12.0)
+
     if report is None:
         return {
             "report": (
                 "Note: Gemini API is currently experiencing high traffic (503). "
-                "Here is the direct match retrieved from your pgvector database:\n\n"
+                "Here is the raw context gathered from your database and live web search:\n\n"
                 f"{context_block}"
-            )
+            ),
+            "sources": active_sources,
         }
 
-    return {"report": report}
-
+    return {
+        "report": report,
+        "sources": active_sources,
+    }
 
 # 6. Traffic Cop: Decide whether to synthesize immediately or rewrite & retry once
-def route_after_grading(state: ResearchState) -> Literal["synthesize", "rewrite_query"]:
-    if state.get("is_relevant", False) or state.get("retry_count", 0) >= 1:
-        return "synthesize"
+def route_after_grading(state: ResearchState) -> str:
+    if state.get("is_relevant") or state.get("retry_count", 0) >= 2:
+        return "web_search"  # <-- Changed from "synthesize"
     return "rewrite_query"
 
 
@@ -148,12 +199,14 @@ builder = StateGraph(ResearchState)
 builder.add_node("retrieve", retrieve_node)
 builder.add_node("grade_documents", grade_documents_node)
 builder.add_node("rewrite_query", rewrite_query_node)
+builder.add_node("web_search", web_search_node)      # <-- New node
 builder.add_node("synthesize", synthesize_node)
 
 builder.add_edge(START, "retrieve")
 builder.add_edge("retrieve", "grade_documents")
 builder.add_conditional_edges("grade_documents", route_after_grading)
 builder.add_edge("rewrite_query", "retrieve")
+builder.add_edge("web_search", "synthesize")         # <-- Web results feed into synthesize
 builder.add_edge("synthesize", END)
 
 research_graph = builder.compile()
