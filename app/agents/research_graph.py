@@ -100,14 +100,13 @@ async def rewrite_query_node(state: ResearchState) -> dict:
         "search_query": rewritten or state["original_query"],
         "retry_count": state.get("retry_count", 0) + 1,
     }
-
 async def web_search_node(state: ResearchState) -> dict:
     search_query = state.get("search_query") or state["original_query"]
     print(f"--> [Station 3.5: Web Search] Searching DuckDuckGo for: '{search_query}'")
 
     try:
         results = await asyncio.to_thread(
-            lambda: list(DDGS().text(search_query, max_results=3))
+            lambda: list(DDGS().text(search_query, max_results=6))
         )
         print(f"--> [Station 3.5: Web Search] Found {len(results)} web results.")
     except Exception as e:
@@ -121,9 +120,12 @@ async def web_search_node(state: ResearchState) -> dict:
         }
 
     web_context = "\n\n".join(
-        [f"URL: {r['href']}\nSnippet: {r['body']}" for r in results]
+        [
+            f"Title: {r.get('title', 'Web Result')}\nURL: {r.get('href', '')}\nSnippet: {r.get('body', '')}"
+            for r in results
+        ]
     )
-    web_sources = [r["href"] for r in results]
+    web_sources = [r["href"] for r in results if r.get("href")]
 
     current_context = list(state.get("context", []))
     current_sources = list(state.get("sources", []))
@@ -136,13 +138,11 @@ async def web_search_node(state: ResearchState) -> dict:
     }
 
 
-# 5. Station 4: Write the final cited engineering report
 async def synthesize_node(state: ResearchState) -> dict:
     print("--> [Station 4: Synthesize] Calling Gemini to write final report...")
     if not settings.GEMINI_API_KEY:
         return {"report": "Error: GEMINI_API_KEY is missing in your .env file."}
 
-    # If internal docs didn't match the question, keep only live web results
     if state.get("is_relevant"):
         active_context = state.get("context", [])
         active_sources = state.get("sources", [])
@@ -162,14 +162,21 @@ async def synthesize_node(state: ResearchState) -> dict:
     )
 
     prompt = (
-        "You are IntelliOps, a senior engineering research assistant.\n"
-        "Answer the user's question clearly using the internal documents and live web search results below.\n"
-        "Always cite the document title/source file or the web URL in your answer.\n\n"
+        "You are IntelliOps, a senior research analyst producing structured intelligence briefings.\n"
+        "Use ONLY the context provided below. Do not invent facts or numbers.\n\n"
+        "Format your report cleanly in Markdown using these exact sections:\n"
+        "## Executive Summary\n"
+        "A direct, 2-3 sentence answer to the user's question with key figures bolded.\n\n"
+        "## Key Findings\n"
+        "- Bullet points breaking down specific facts, metrics, dates, or trends found in the sources.\n"
+        "- Cite the source inline as [Source Name](URL) or (`filename`) right next to each claim.\n\n"
+        "## Data Freshness & Gaps\n"
+        "Briefly note any missing details, conflicting numbers across sources, or if real-time data could not be verified.\n\n"
         f"Context:\n{context_block}\n\n"
         f"User Question: {state['original_query']}"
     )
 
-    report = await call_gemini(prompt, timeout_seconds=12.0)
+    report = await call_gemini(prompt, timeout_seconds=15.0)
 
     if report is None:
         return {
@@ -186,12 +193,11 @@ async def synthesize_node(state: ResearchState) -> dict:
         "sources": active_sources,
     }
 
-# 6. Traffic Cop: Decide whether to synthesize immediately or rewrite & retry once
-def route_after_grading(state: ResearchState) -> str:
-    if state.get("is_relevant") or state.get("retry_count", 0) >= 2:
-        return "web_search"  # <-- Changed from "synthesize"
-    return "rewrite_query"
 
+def route_after_grading(state: ResearchState) -> str:
+    if state.get("is_relevant") or state.get("retry_count", 0) >= 1:
+        return "web_search"
+    return "rewrite_query"
 
 # 7. Wire up the Stateful Graph
 builder = StateGraph(ResearchState)
