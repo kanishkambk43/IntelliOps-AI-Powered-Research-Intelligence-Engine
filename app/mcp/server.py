@@ -1,5 +1,4 @@
-
-
+import sys
 import asyncio
 from ddgs import DDGS
 from mcp.server.fastmcp import FastMCP
@@ -14,20 +13,56 @@ def greet(name: str) -> str:
 
 
 
+
 @mcp.tool()
-async def search_web(query: str, max_results: int = 3) -> dict:
-    """Search the web and return relevant results."""
+async def search_web(query: str, max_results: int = 6) -> dict:
 
     def run_search():
-         import sys 
-         import os
+        with DDGS() as ddgs:
+            return list(
+                ddgs.text(query, max_results=max_results)
+            )
 
-         print(f"Python: {sys.executable}", file=sys.stderr)
-         print(f"Process ID: {os.getpid()}", file=sys.stderr)
-         print(f"Search query: {query!r}", file=sys.stderr)
+    max_attempts = 3
+    last_error = ""
 
-    with DDGS() as ddgs:
-        return list(ddgs.text(query, max_results=max_results))
+    for attempt in range(max_attempts):
+
+        try:
+            results = await asyncio.to_thread(run_search)
+
+            if results:
+                return {
+                    "success": True,
+                    "results": [
+                        {
+                            "title": r.get("title", ""),
+                            "url": r.get("href", ""),
+                            "snippet": r.get("body", ""),
+                        }
+                        for r in results
+                    ],
+                }
+
+            last_error = "No results found"
+
+        except Exception as e:
+            last_error = str(e)
+
+        print(
+            f"[MCP] Attempt {attempt + 1} failed: {last_error}",
+            file=sys.stderr,
+        )
+
+        if attempt < max_attempts - 1: #Exponential backoff
+            await asyncio.sleep(2 ** attempt)
+
+    return {
+        "success": False,
+        "error": last_error,
+        "results": [],
+    }
+
 
 
 if __name__ == "__main__":

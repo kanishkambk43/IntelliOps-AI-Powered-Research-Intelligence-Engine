@@ -3,9 +3,10 @@ from typing import Literal, TypedDict
 from google import genai
 from langgraph.graph import END, START, StateGraph
 from sqlalchemy.ext.asyncio import AsyncSession
-from ddgs import DDGS
+from app.mcp.client import search_web_via_mcp
 from app.core.config import settings
 from app.rag.retriever import RAGRetriever
+import traceback
 
 MODEL_ID = "gemini-3.5-flash-lite"
 
@@ -100,18 +101,32 @@ async def rewrite_query_node(state: ResearchState) -> dict:
         "search_query": rewritten or state["original_query"],
         "retry_count": state.get("retry_count", 0) + 1,
     }
+
 async def web_search_node(state: ResearchState) -> dict:
+
     search_query = state.get("search_query") or state["original_query"]
-    print(f"--> [Station 3.5: Web Search] Searching DuckDuckGo for: '{search_query}'")
+
+    print(f"--> [Station 3.5: MCP Web Search] Searching for: '{search_query}'")
 
     try:
-        results = await asyncio.to_thread(
-            lambda: list(DDGS().text(search_query, max_results=6))
+        response = await search_web_via_mcp(
+            query=search_query,
+            max_results=6,
         )
-        print(f"--> [Station 3.5: Web Search] Found {len(results)} web results.")
+
+        if not response.get("success"):
+            raise RuntimeError(
+                response.get("error", "Web search failed")
+            )
+
+        results = response.get("results", [])
+
+        print(f"--> [MCP Web Search] Found {len(results)} results.")
+
     except Exception as e:
-        print(f"[WARN] DuckDuckGo search failed: {e}")
-        results = []
+     print(f"[WARN] MCP web search failed: {e}")
+     traceback.print_exc()
+     results = []
 
     if not results:
         return {
@@ -121,21 +136,29 @@ async def web_search_node(state: ResearchState) -> dict:
 
     web_context = "\n\n".join(
         [
-            f"Title: {r.get('title', 'Web Result')}\nURL: {r.get('href', '')}\nSnippet: {r.get('body', '')}"
+            f"Title: {r.get('title', 'Web Result')}\n"
+            f"URL: {r.get('url', '')}\n"
+            f"Snippet: {r.get('snippet', '')}"
             for r in results
         ]
     )
-    web_sources = [r["href"] for r in results if r.get("href")]
 
-    current_context = list(state.get("context", []))
-    current_sources = list(state.get("sources", []))
+    web_sources = [
+        r["url"] for r in results if r.get("url")
+    ]
 
-    current_context.append(f"--- LIVE WEB SEARCH RESULTS ---\n{web_context}")
+    current_context = list(state.get("context", [])) #retrieves the previously stored context.Ex-->> context from the local_document.pdf
+    current_sources = list(state.get("sources", [])) #retrieves the previously stored sources from the state.Ex->>local_document.pdf
+
+    current_context.append(
+        f"--- LIVE WEB SEARCH RESULTS ---\n{web_context}"
+    )
 
     return {
         "context": current_context,
         "sources": current_sources + web_sources,
     }
+
 
 
 async def synthesize_node(state: ResearchState) -> dict:
