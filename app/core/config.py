@@ -20,7 +20,13 @@ class Settings(BaseSettings):
     POSTGRES_DB: str
 
     # AI / LLM Settings
+    # AI / LLM Settings
+    # AI / LLM Settings
     GEMINI_API_KEY: str = ""
+    GEMINI_MODEL: str = "gemini-3.5-flash-lite"
+
+    GROQ_API_KEY: str = ""
+    GROQ_MODEL: str = "openai/gpt-oss-120b"
 
     @property #function into a variable
     def async_database_url(self) -> str:

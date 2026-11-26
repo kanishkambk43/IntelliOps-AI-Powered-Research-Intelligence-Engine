@@ -1,4 +1,4 @@
-import asyncio
+from app.services.llm_service import generate_with_fallback
 from typing import Literal, TypedDict
 from google import genai
 from langgraph.graph import END, START, StateGraph
@@ -7,31 +7,6 @@ from app.mcp.client import search_web_via_mcp
 from app.core.config import settings
 from app.rag.retriever import RAGRetriever
 import traceback
-
-MODEL_ID = "gemini-3.5-flash-lite"
-
-
-# Helper: Hard 10-second timeout so Google 503 retries never hang your request
-async def call_gemini(prompt: str, timeout_seconds: float = 10.0) -> str | None:
-    if not settings.GEMINI_API_KEY:
-        return None
-    try:
-        client = genai.Client(api_key=settings.GEMINI_API_KEY)
-        response = await asyncio.wait_for(
-            client.aio.models.generate_content(
-                model=MODEL_ID,
-                contents=prompt,
-            ),
-            timeout=timeout_seconds,
-        )
-        return (response.text or "").strip()
-    except asyncio.TimeoutError:
-        print(f"[WARN] Gemini call timed out after {timeout_seconds}s (Google server busy).")
-        return None
-    except Exception as e:
-        print(f"[WARN] Gemini API error: {e}")
-        return None
-
 
 # 1. The Clipboard: Holds state across the entire graph
 # 1. Update ResearchState to include 'sources'
@@ -96,7 +71,12 @@ async def rewrite_query_node(state: ResearchState) -> dict:
         f"Question: {state['original_query']}"
     )
 
-    rewritten = await call_gemini(prompt, timeout_seconds=8.0)
+    rewritten = await generate_with_fallback(
+    prompt,
+    timeout_seconds=4.0,
+    max_attempts=1,
+    fallback_timeout=4.0
+    ) 
     return {
         "search_query": rewritten or state["original_query"],
         "retry_count": state.get("retry_count", 0) + 1,
@@ -162,9 +142,8 @@ async def web_search_node(state: ResearchState) -> dict:
 
 
 async def synthesize_node(state: ResearchState) -> dict:
-    print("--> [Station 4: Synthesize] Calling Gemini to write final report...")
-    if not settings.GEMINI_API_KEY:
-        return {"report": "Error: GEMINI_API_KEY is missing in your .env file."}
+    print("--> [Station 4: Synthesize] Generating final report...")
+    
 
     if state.get("is_relevant"):
         active_context = state.get("context", [])
@@ -199,17 +178,23 @@ async def synthesize_node(state: ResearchState) -> dict:
         f"User Question: {state['original_query']}"
     )
 
-    report = await call_gemini(prompt, timeout_seconds=15.0)
+    report = await generate_with_fallback(
+    prompt,
+    timeout_seconds=8.0,
+    max_attempts=2,
+    fallback_timeout=15.0
+    )
 
     if report is None:
-        return {
-            "report": (
-                "Note: Gemini API is currently experiencing high traffic (503). "
-                "Here is the raw context gathered from your database and live web search:\n\n"
-                f"{context_block}"
-            ),
-            "sources": active_sources,
-        }
+     return {
+        "report": (
+            "## Research Evidence\n\n"
+            "AI report generation is temporarily unavailable. "
+            "Below is the collected research evidence.\n\n"
+            f"{context_block}"
+        ),
+        "sources": active_sources,
+    }
 
     return {
         "report": report,
